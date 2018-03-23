@@ -5,7 +5,7 @@ These are introductory notebooks in R and Python to get started with data scienc
 3. Data Exploration
 4. Data Modelling
 
-(c) Mostly AI Solutions MP GmbH, Austria
+(c) http://mostly.ai
 
 The R and Python notebooks are released under CC-BY-SA, see https://creativecommons.org/licenses/by-sa/4.0/
 
