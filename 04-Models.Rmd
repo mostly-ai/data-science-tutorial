@@ -1,0 +1,329 @@
+---
+title: 'R Primer IV: Models'
+output:
+  html_document: default
+  html_notebook: default
+---
+
+```{r setup, cache = FALSE, echo = FALSE}
+# Don't stop compiling the notebook when an error occurs
+knitr::opts_chunk$set(error = TRUE)
+options(width = 120)
+```
+
+The final part of the analysis pipeline is to compute the models to be used for the prediction. Before we start actually
+training any model, we should split the dataset into train, valudation and test subsets to be able to diagnose and avoid
+overfitting the models.
+
+First, the tidyverse and magrittr packages are loaded, and a seed is set for reproducibility:
+```{r}
+set.seed(071117)
+library(tidyverse)
+library(magrittr)
+```
+
+We use the cholesterol dataset seen in Part II: Data Wrangling of this R Primer to show the basic steps to perform such
+a split. 
+```{r}
+chol <- read_csv('cholesterol.csv')
+```
+
+Using the spread function, we are able to use the cholesterol values of multiple time points for the prediction models.
+```{r}
+chol_spread <- chol %>% spread(Time, Cholesterol)
+colnames(chol_spread)[3:5] <- paste0('T', 1:3)
+```
+
+The data is split into train, validation and test set by randomly assigning ids to each of the three sets:
+```{r}
+n <- length(unique(chol_spread$ID))
+train_ids <- sample(unique(chol_spread$ID), n * .75)
+test_ids <- setdiff(unique(chol_spread$ID), train_ids)
+
+validation_ids <- sample(train_ids, length(train_ids) * .33)
+train_ids <- setdiff(train_ids, validation_ids)
+
+chol_train <- chol_spread %>% filter(ID %in% train_ids)
+chol_valid <- chol_spread %>% filter(ID %in% validation_ids)
+chol_test <- chol_spread %>% filter(ID %in% test_ids)
+```
+
+The three subsets are then always used in a very specific way.
+
+ * The train dataset is used for fitting all models.
+ * The validation dataset is used for finding the best model configuration (prediction variables, parameters, etc.).
+ * The test dataset is only used to check the quality of the final model and should never be used to tune models.
+
+In this example pipeline, we will train two different linear models using different model specifications. Both models
+are trained on the training dataset. In practice, the total number of models trained can of course be much larger than
+two, perhaps using stepwise variable selection methods.
+
+The first model uses the tree variables only additively...
+```{r}
+m1 <- lm(T3 ~ T1 + T2 + Margarine, data = chol_train)
+summary(m1)
+```
+
+...the second model includes interaction terms between the two 
+Cholesterol measurements at T1 and T2 and the type of Margarine. 
+```{r}
+m2 <- lm(T3 ~ (T1 + T2) * Margarine, data = chol_train)
+summary(m2)
+```
+
+From this first impression, it seems that the interaction terms do not contribute significantly to the prediction. In 
+the summaries, we can see that  though the residual standard error of the second model is lower than that of the first
+model, but this only means that the error on the training dataset is smaller. It is quite possible that this is only due
+to overfitting, and the larger might well be worse at predicting new data.
+
+To this end, we compute the error function -- in this example, the mean squared error -- on the validation dataset to 
+compare the prediction quality for previously unseen data points of the two models. The predictions for the validation
+dataset are computed with each of the two models and the mean squared error is computed between the predictions and the
+true measurements in the validation set.
+```{r}
+m1_pred_valid <- predict(m1, chol_valid)
+sum((m1_pred_valid - chol_valid$T3)^2)
+
+m2_pred_valid <- predict(m2, chol_valid)
+sum((m2_pred_valid - chol_valid$T3)^2)
+```
+The result shows that the second model is worse in generalizing, which confirms the impression that the lower training
+error was due to overfitting.
+
+We will thus decide to use the first model as our prediction model. To assess the prediction quality of the model, we 
+compute the mean squared error on the test set:
+
+```{r}
+m1_pred_test <- predict(m1, chol_test)
+sum((m1_pred_test - chol_test$T3)^2)
+```
+Using a separate test set to compute the generalization error when the validation error was already computed on data
+not previously used by the estimator might seem odd at first in this case. However, especially when more than two models
+are begin compared and the best one selected based on it having the lowest validation error, then this validation error
+is a biased estimate of the real generalization error. The selected model might just be one of several equivalent models
+which just happens to have the lowest validation error between them purely due to random variation.[^1]
+
+[^1]: In the Cholesterol example, the validation and test sets are very small, leading to extremely high random
+variability -- results should therefore not be taken at face value, but they illustrate the basic workflow.
+
+All data that has in some way been used to train or select the model cannot be used to give an unbiased estimate of the 
+actual model quality. It is therefore important never to try to improve a model based on results from the test set.
+
+## Classification
+
+Moving on to classification, we will use the Stack Overflow 2017 survey data that we visualized in the Data Exploration
+part. 
+
+```{r}
+so <- read_csv('survey_results_public.csv')
+so %<>% select(Respondent, HomeRemote:YearsProgram, ProblemSolving:ChangeWorld, ClickyKeys, Overpaid, TabsSpaces, JobSatisfaction, CareerSatisfaction, HaveWorkedLanguage)
+so %<>% mutate(JobSatisfaction = as.factor(JobSatisfaction >= 7))
+so %<>% mutate(UsesR = grepl('(R$)|(R; )', HaveWorkedLanguage)) %>% select(-HaveWorkedLanguage)
+```
+
+As in the regression example above, the data is split into train, validation and test sets:
+```{r}
+# Split the dataset into train and test sets
+n <- length(unique(so$Respondent))
+train_ids <- sample(unique(so$Respondent), n * .75)
+test_ids <- setdiff(unique(so$Respondent), train_ids)
+
+# Further split training dataset into the training set proper and a validation set
+validation_ids <- sample(train_ids, length(train_ids) * .33)
+train_ids <- setdiff(train_ids, validation_ids)
+
+so_train <- so %>% filter(Respondent %in% train_ids) %>% select(-Respondent)
+so_valid <- so %>% filter(Respondent %in% validation_ids) %>% select(-Respondent)
+so_test  <- so %>% filter(Respondent %in% test_ids) %>% select(-Respondent)
+```
+
+### Generalized Linear Models
+
+We will try to predict job satisfaction (binarized to answers >= 7 or < 7 out of 10) based on the other variables. The
+first model class to be used is the generalized linear model, which has the advantage of relatively easy 
+interpretability due to it being based on the theoretical framework of the linear model.
+
+The first model uses all available variables:
+```{r}
+m_glm <- glm(JobSatisfaction ~ ., data = so_train, family = binomial)
+summary(m_glm)
+```
+
+We can see that among the variables that are included, quite a few could be seen as having a significant influence based
+on the t-test in the summary table. However, the significance level of the test being 0.05, we would expect 5% of the 
+tests turning out to be "significant" purely due to chance, thus many of the significant variables identified in the 
+summary table might just randomly appear to be significant, without having any real impact on the target variable.
+
+In the second model, we try to use a priori knowlege/intuition to restrict the models to the three variables that we 
+suspect to have the largest influence on job satisfaction: whether the developers use R, whether they prefers tabs or 
+spaces, and whether they find colleagues typing on keyboards with loud "clicky" keys in an office annoying. 
+```{r}
+m_glm_2 <- glm(JobSatisfaction ~ UsesR + TabsSpaces + ClickyKeys, data = so_train, family = binomial)
+summary(m_glm_2)
+```
+
+It turns out that both prefering spaces over tabs and getting annoyed by clicky keys have a significant positive impact
+on job satisfaction, whereas using R has a positive coefficient, but its effect is not statistically significant. 
+Perhaps things are not as simple as we assumed in our first intuition. How about generalizability of the complex and the
+simple model?
+
+To this end, we compute the accuracy of the models on the validation set.
+```{r}
+m_glm_valid <- predict(m_glm, so_valid)
+dispersion_matrix <- table(m_glm_valid > 0, so_valid$JobSatisfaction)
+sum(diag(dispersion_matrix)) / sum(dispersion_matrix)
+```
+
+Comparing this to the validation accurary of the simple model:
+```{r}
+
+m_glm_2_valid <- predict(m_glm_2, so_valid)
+dispersion_matrix <- table(m_glm_2_valid > 0, so_valid$JobSatisfaction)
+sum(diag(dispersion_matrix)) / sum(dispersion_matrix)
+```
+
+At this point, it becomes clear that the simple model is missing some crucial information: the accuracy is much lower
+than that of the model with all variables, not only on the training set (which could be due to overfitting), but also
+on the validation set.
+
+### Random Forests
+
+Random forests are a potentially more powerful class of models. There exist multiple implementations in R, we will use
+the package `ranger` for its speed.
+```{r}
+library(ranger) # Fast implementation of random forests
+m_rf <- ranger(JobSatisfaction ~ ., data = so_train)
+```
+
+This call, however, leads to an error because of `NA` values in the prediction columns. It can easily be solved by 
+replacing the NA values with a new factor level 'NA':
+
+```{r}
+for (colname in colnames(so_train)) {
+  so_train %<>% mutate_(.dots = setNames(list(paste0('addNA(as.factor(', colname, '))')), colname)) %>% 
+    filter(JobSatisfaction %in% c('TRUE', 'FALSE'))
+  so_valid %<>% mutate_(.dots = setNames(list(paste0('addNA(as.factor(', colname, '))')), colname)) %>%
+    filter(JobSatisfaction %in% c('TRUE', 'FALSE'))
+  so_test %<>% mutate_(.dots = setNames(list(paste0('addNA(as.factor(', colname, '))')), colname)) %>%
+    filter(JobSatisfaction %in% c('TRUE', 'FALSE'))
+}
+```
+
+The random forest model can now be trained.
+```{r}
+m_rf <- ranger(JobSatisfaction ~ ., data = so_train)
+m_rf
+```
+
+Note the OOB (out of bag) error in the output, a particular type of error estimation possible in random forest models
+that gives a good first estimate of the accuracy of the model on unseen data.
+
+As with the glm model, we can estimate the accuracy using the validation set:
+```{r}
+m_rf_valid <- predict(m_rf, so_valid)
+dispersion_matrix <- table(m_rf_valid$predictions , so_valid$JobSatisfaction)
+sum(diag(dispersion_matrix)) / sum(dispersion_matrix)
+```
+
+The accuracy is similar to the accuracy of the full glm model. The OOB prediction error mentioned above already gave a
+good indication of the accuracy on unseen data. We can still try to tune the model by adjustig the parameters:
+```{r}
+m_rf_2 <- ranger(JobSatisfaction ~ ., data = so_train, min.node.size = 100)
+m_rf_2_valid <- predict(m_rf_2, so_valid)
+dispersion_matrix <- table(m_rf_2_valid$predictions , so_valid$JobSatisfaction)
+sum(diag(dispersion_matrix)) / sum(dispersion_matrix)
+
+m_rf_3 <- ranger(JobSatisfaction ~ ., data = so_train, min.node.size = 200)
+m_rf_3_valid <- predict(m_rf_3, so_valid)
+dispersion_matrix <- table(m_rf_3_valid$predictions , so_valid$JobSatisfaction)
+sum(diag(dispersion_matrix)) / sum(dispersion_matrix)
+```
+
+Parameter tuning is not a task to be performed manually, it can be automated for a more efficient search through the 
+parameter space. A simple tuning method for a single parameter might look as follows:
+```{r}
+tune_rf <- function(min_node_size) {
+  m_rf <- ranger(JobSatisfaction ~ ., data = so_train, min.node.size = min_node_size)
+  m_rf_valid <- predict(m_rf, so_valid)
+  dispersion_matrix <- table(m_rf_valid$predictions , so_valid$JobSatisfaction)
+  sum(diag(dispersion_matrix)) / sum(dispersion_matrix)
+}
+
+min_node_size_candidates <- c(seq(1, 51, by = 10), seq(100, 1000, by = 300))
+setNames(sapply(min_node_size_candidates, tune_rf), min_node_size_candidates)
+```
+
+We can also try to tune multiple parameters, however, the number of models to be computed increases exponentially with 
+the number of parameters to tune, so this method can get unwieldy rather quickly.
+```{r}
+tune_rf <- function(min_node_size, mtry) {
+  m_rf <- ranger(JobSatisfaction ~ ., data = so_train, min.node.size = min_node_size, mtry = mtry)
+  m_rf_valid <- predict(m_rf, so_valid)
+  dispersion_matrix <- table(m_rf_valid$predictions , so_valid$JobSatisfaction)
+  sum(diag(dispersion_matrix)) / sum(dispersion_matrix)
+}
+```
+
+The `apply`-type function for efficient looping over multiple vectors is `mapply`, which iterates over multiple vectors. 
+In each iteration, the i-th element of all vectors is used.
+```{r}
+node_size_candidates <- rep(c(20, 80, 800), each = 2)
+mtry_candidates <- rep(c(2, 5), 3)
+rbind(node_size_candidates, mtry_candidates)
+```
+
+```{r}
+mapply(tune_rf, 
+       node_size_candidates, 
+       mtry_candidates)
+```
+
+### Gradient Boosted Machines
+
+The last method to be presented here, and one that is frequently found in winning entries at kaggle, is gradient 
+boosting. We will use the package `xgboost` for this:
+```{r}
+library(xgboost)
+```
+
+The inputs for `xgboost` must be numeric vectors and matrices, so we need some recoding:
+```{r}
+so_train_x <- as.matrix(so_train %>% select(-JobSatisfaction) %>% sapply(as.numeric))
+so_train_y <- as.numeric(so_train[['JobSatisfaction']]) * 2 - 3  # Encode as -1 / 1
+so_valid_x <- as.matrix(so_valid %>% select(-JobSatisfaction) %>% sapply(as.numeric))
+```
+
+We can then train a model and compute its validation accuracy. In contrast to the methods presented above, gradient
+boosting is an iterative algorithm, so the number of iteration rounds can be specified as a parameter.
+```{r}
+m_xgb <- xgboost(so_train_x, so_train_y, nrounds = 50, print_every_n = 10)
+
+m_xgb_valid <- predict(m_xgb, so_valid_x)
+
+dispersion_matrix <- table(m_xgb_valid > 0, so_valid$JobSatisfaction)
+sum(diag(dispersion_matrix)) / sum(dispersion_matrix)
+```
+
+Even though during training, the training error always decreases, this does not mean that the model can only get better
+with more iterations. On the contrary, too many training iterations can lead to overfitting and decreased accuracy on
+new data, and should therefore be avoided. The validation set can be used to find the right time to stop the algorithm
+before overfitting occurs.
+
+```{r}
+m_xgb_2 <- xgboost(so_train_x, so_train_y, nrounds = 500, print_every_n = 100)
+
+m_xgb_2_valid <- predict(m_xgb_2, so_valid_x)
+
+dispersion_matrix <- table(m_xgb_2_valid > 0, so_valid$JobSatisfaction)
+sum(diag(dispersion_matrix)) / sum(dispersion_matrix)
+```
+
+Only after deciding for a final model, we can use the test dataset to evaluate the accuracy of final model
+```{r}
+so_test_x <- as.matrix(so_test %>% select(-JobSatisfaction) %>% sapply(as.numeric))
+m_xgb_test <- predict(m_xgb, so_test_x)
+
+dispersion_matrix <- table(m_xgb_test > 0, so_test$JobSatisfaction)
+sum(diag(dispersion_matrix)) / sum(dispersion_matrix)
+```
+

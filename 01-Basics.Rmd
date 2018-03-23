@@ -1,0 +1,257 @@
+---
+title: 'R Primer I: Refresher'
+output:
+  html_document: default
+  html_notebook: default
+---
+
+```{r setup, cache = FALSE, echo = FALSE}
+# Don't stop compiling the notebook when an error occurs
+knitr::opts_chunk$set(error = TRUE)
+```
+
+This notebook provides a short refresher on R basics to quickly get started working in R. 
+
+# Vectors and Matrices 
+
+Let's first use the R prompt interactively for simple calculations:
+```{r}
+1 + 1
+```
+
+## Creating Vectors
+
+Variables are assigned with the `<-` operator. While it is also possible to use `=` as the assignment operator, this is
+avoided in standard R coding practice to help distinguish variable assignments from function parameters.
+```{r}
+x <- 1:10
+x
+```
+The `:` operator is a simple way to create sequences in R, the data structure thus created is a vector. 
+When arithmetic computations are performed on vectors, they are applied element-wise. For example, a multiplication of a
+vector by a scalar results in all elements of the vector being multiplied.
+```{r}
+x * 2
+```
+
+To harness vectorized computation, it is useful to know the basic ways to create sequences:
+```{r}
+y <- rep(c(1, 2), 5)
+y
+x * y
+
+y <- rep(c(1, 2), each = 5)
+y
+x * y
+
+seq(0, 10, by = 2)
+seq(0, 10, length = 5)
+seq_along(y)
+```
+
+## Accessing elements of vectors
+
+Elements within vectors can be selected in multiple ways, with either one of:
+
+* positive numeric indices select the elements at the given position, with indexing starting at 1:
+```{r}
+x[1]
+x[2:4]
+x[c(2, 5, 3)]
+```
+
+* negative numeric indices select all elements except the ones a the given positions:
+```{r}
+x[-(2:4)]
+```
+
+* a boolean index vector of the same length as the original vector:
+```{r}
+x[rep(c(TRUE, FALSE), 5)]
+```
+
+* a character vector containing names of the elements:
+```{r}
+names(x) <- letters[seq_along(x)]
+x
+x[c('d', 'b', 'c')]
+```
+
+Names that do not exist produce `NA`'s
+```{r}
+x[c('a', 'foo', 'bar', 'b')]
+```
+
+It is not possible to mix multiple types of indexing, an error will occur if one tries to do so:
+```{r}
+x[-2:4]
+```
+
+## Matrices
+
+A Matrix is a two-dimensional structure, with all elements being of the same type (e.g. numeric):
+```{r}
+x <- matrix(1:12, nrow = 3)
+x
+```
+
+Elements from a matrix can be selected in a similar manner to vectors, with row and column indices separated by a comma.
+All of the indexing methods for vectors also work for matrices.
+```{r}
+x[2, 3]
+x[3, -2]
+```
+
+To select entire rows and columns, leave the column or row index empty.
+```{r}
+x[1, ]
+x[, 2:3]
+```
+
+# Data Frames and Tibbles
+
+## Creating and using data frames
+More complex data can be stored in `data.frame`s and their more modern version, tibbles. The main difference between
+a matrix and a data.frame or a tibble is that the latter two can have columns of different types.
+```{r}
+chol_df <- read.csv('cholesterol.csv')
+```
+
+To see the contents of a `data.frame`, we could just type its name as we have done with the other variables so far. 
+However, this will print the whole dataset, which is more information than needed most of the time and particularly 
+inconvenient for large datasets...
+```{r}
+chol_df
+```
+
+Instead, one can get a simple overview of the data using
+```{r}
+str(chol_df)
+```
+
+## Accessing elements of a data frame
+
+As for vectors and matrices, there are multiple ways of accessing elements of a data.frame
+```{r}
+chol_df[1:10, ]
+chol_df[, 2:3]
+chol_df[, 'Time']
+chol_df[, c('Time', 'Cholesterol')]
+```
+
+The `$` operator provides a shorthand access to entire columns:
+```{r}
+chol_df$Time
+chol_df[['Time']]
+```
+To select rows based on their values in one of the columns, an ad-hoc boolean vector can be calculated, for example
+using the comparison `==`. Like all other comparisons, this will applied elementwise and return a vector.
+```{r}
+chol_df[chol_df$Time == 1, ]
+```
+
+## Writing data frames to files
+
+We can then also write data in much the same way as it was read from the disk:
+```{r}
+write.csv(chol_df, file = 'temp.csv', row.names = FALSE)
+```
+
+## Using tibbles
+
+As noted above, the "tibble" is a more modern alternative to the `data.table`. It behaves very similarly, but with
+slight improvements. The R package `tibble` can be loaded to use tibbles...
+```{r}
+library(tibble)
+```
+...but there is also a more convenient way to do so by loading the `tidyverse` 'Metapackage' which loads a collection of
+packages, including `tibble`.
+```{r}
+library(tidyverse)
+```
+The `read_csv` function is the `tidyverse` alternative to `read.csv`, and it returns a tibble instead of a 
+`data.frame`. Note the `_` instead of the `.` in the function name: this is the naming convention in the tidyverse. In 
+contrast to `read.csv`, character columns are not automatically converted to factors, and a report of the column types
+is printed after reading a file:
+```{r}
+chol <- read_csv('cholesterol.csv')
+```
+
+By default, only the first 10 rows and only as many columns as fit on the screen are printed. In addition, the dataset
+dimensions and the column types are displayed as additional information.
+```{r}
+chol
+```
+
+We can manually change the number of rows printed by calling the `print` function explicitely and using the parameter
+`n`.
+```{r}
+print(chol, n = 40)
+```
+
+If we need to print the whole dataset, `n` can also be set to infinity:
+```{r}
+print(chol, n = Inf)
+```
+
+Note that a tibble (class `tbl`) is also at the same time a `data.frame`.
+```{r}
+class(chol)
+```
+
+Other ways of getting summary information of the dataset work as with `data.frame`s
+```{r}
+dim(chol)
+str(chol)
+```
+
+## Accessing elements of a tibble
+
+In general, a tibble can be used much in the same way as a `data.frame`
+```{r}
+chol[1:10, ]
+chol[, 2:3]
+```
+
+```{r}
+chol[, 'Time']
+```
+
+Note that when using `[` to create a subset, this always returns another tibble, in contrast to `data.frame`s, which 
+will automatically convert the result into a vector if one of the dimensions is 1:
+```{r}
+chol_df[, 'Time']  # data.frame
+```
+
+To return a column as a vector, we have to do so explicitely with either
+```{r}
+chol[['Time']]  # tibble
+```
+or 
+```{r}
+chol$Time
+```
+
+## Reading and writing files in the tidyverse
+
+As with `read_csv`, there is also a tidyverse function for writing datasets. In addition to being twice as fast, it
+never writes rownames, so we can omit the `row.names` parameter that we used in `write.csv`.
+```{r}
+write_csv(chol, path = 'temp.csv')
+```
+
+The tidyverse read/write functions, including the `read_csv` and `write_csv` functions encountered above, can be found
+in the package `readr`, which supports all kinds of text file inputs. 
+```{r}
+help(package = readr)
+```
+
+Other specific file types from other programs can be imported using the tidyverse packages `readxl` (for Microsoft Excel
+files) and `haven` (for SPSS, SAS, and Stata).
+```{r}
+help(package = readxl)
+help(package = haven)
+```
+
+R can also work directly with a database interface, see the package `DBI`, even using `dplyr` functions for database 
+queries if the package `dbplyr` is installed (`dplyr` will be covered in Part II of this primer).

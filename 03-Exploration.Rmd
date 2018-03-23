@@ -1,0 +1,195 @@
+---
+title: "R Primer III - Exploratory Data Analysis"
+output:
+  html_document: default
+  html_notebook: default
+---
+
+This part of the primer focuses on graphics for exploratory data analysis. Its goal is to show off four main types of
+graphics and how they can be used to explore a dataset.
+
+# Setting up the dataset
+
+The graphics functions we use will come from the package `ggplot2`, another package of the `tidyverse`:
+```{r}
+library(tidyverse)
+library(magrittr)
+```
+
+We will use data from the 2017 Stack Overflow developer survey, but to keep things simple we will only use a small
+number of the variables of the survey[^1].
+
+[^1]: The example presented here is based on an analysis published in the Stack Overflow blog: 
+https://stackoverflow.blog/2017/06/15/developers-use-spaces-make-money-use-tabs/
+```{r}
+so_full <- read_csv('survey_results_public.csv')
+dim(so_full)
+so %>% select(Respondent, Country, DeveloperType, YearsCodedJob, TabsSpaces, Salary)
+str(so)
+```
+
+## Handling categorical variables
+In addition, we will load the `forcats` package for easier handling of categorical data.
+```{r}
+library(forcats)
+```
+
+The package `forcats` is used to rearrange and recode the factor variables for the purposes of this demonstration. 
+The `forcats` functions can be recognized in the code below by their prefix: 
+* `fct_` for functions that change the values in the factor
+* `lvls_` for functions that only change the labels and ordering of the factor levels
+```{r}
+countries <- c('United States', 'India', 'United Kingdom', 'Germany', 'Canada')
+so %<>% mutate(Country = fct_other(Country, keep = countries)) %>%
+  mutate(Country = lvls_reorder(Country, c(5, 3, 4, 2, 1, 6)))
+
+so %<>% filter(!is.na(TabsSpaces)) %>% mutate(TabsSpaces = lvls_reorder(as.factor(TabsSpaces), c(2, 3, 1)))
+
+so %<>% 
+  mutate(YearsCodedJob = fct_collapse(as.factor(YearsCodedJob), 
+                                      '< 5y'  = c('Less than a year', 
+                                                  '1 to 2 years', 
+                                                  '2 to 3 years', 
+                                                  '3 to 4 years', 
+                                                  '4 to 5 years'),
+                                      '6-10'  = c('5 to 6 years',
+                                                  '6 to 7 years',
+                                                  '7 to 8 years',
+                                                  '8 to 9 years',
+                                                  '9 to 10 years'),
+                                      '11-15' = c('10 to 11 years',
+                                                  '11 to 12 years',
+                                                  '12 to 13 years',
+                                                  '13 to 14 years',
+                                                  '14 to 15 years'),
+                                      '15+'   = c('15 to 16 years', 
+                                                  '16 to 17 years',
+                                                  '17 to 18 years',
+                                                  '18 to 19 years',
+                                                  '19 to 20 years',
+                                                  '20 or more years'))) %>%
+  mutate(YearsCodedJob = lvls_reorder(YearsCodedJob, c(3, 4, 1, 2)))
+```
+
+A simple yet effective plot to visualize numerical variables is the boxplot -- each variable is represented by a box 
+stretching from the 25%-quantile to the 75%-quantile, with a line marking the median (or 50%-quantile). In this example,
+we are interested in the question whether there is a relationship between a programmer's preferences for tabs or spaces 
+and his salary.
+```{r, warning=FALSE}
+g <- ggplot(so, aes(x = TabsSpaces, y = Salary, fill = TabsSpaces)) + geom_boxplot(notch = TRUE, na.rm = TRUE)
+plot(g)
+```
+
+The function call is pretty simple and helps establish the "grammar" used by the `ggplot2` package (actually,
+"grammar of graphics" is what the "gg" in "ggplot" stands for). The first argument of `ggplot` is the dataset to be 
+used, and its second argument is the aesthetics parameter -- this has to be an object produced by the function
+`aes`, and it defines which of the variables of the dataset are used in which role. In this case, we want `TabsSpaces` 
+to be represented on the x axis, `Salary` on the y axis and the fill color of the boxes determined by `TabsSpaces`. 
+
+The aesthetics define the basic setup of the plot, which is more or less independent of the type of visualization. The
+latter is defined by `geom_boxplot`, which, as the name suggests, draws boxplots, and is "added" to the plot with the
+`+` operand. Using this operand, we can modify existing plots, as we will see in the next example. The plot definition
+is then saved in the variable `g`, and drawn using the `plot` function[^2].
+
+[^2]: We could also use the function `print` instead of `plot` to the same effect. `print` is also implicitly called 
+whenever the result of a calculation is not stored to a variable, meaning that just typing `g` in the console will also
+result in the plot being drawn (via the implicit `print` call).
+
+The last thing to note on the boxplots is the notches drawn around the median using the parameter `notch = TRUE`, which 
+indicate confidence intervals for the median. In this graphic, we can see that the confidence intervals of the medians 
+of all three groups are much smaller than the difference between the medians of the "Spaces" box on the one hand and the
+"Tabs" and "Both" boxes on the other, indicating that this difference is much larger than the sampling uncertainty of
+the survey. We can thus conclude that the difference is very unlikely to be due to change alone. Developers using spaces
+instead of tabs earn significantly more than those who prefer tabs.
+
+In our next example, we will draw a barplot:
+```{r}
+g <- so %>% 
+  group_by(TabsSpaces) %>% 
+  summarize(Salary = median(Salary, na.rm = TRUE)) %>% 
+  ggplot(aes(x = TabsSpaces, y = Salary, fill = TabsSpaces)) + 
+  geom_col(na.rm = TRUE)
+print(g)
+```
+
+Note that the call of the function `ggplot` looks identical to the one for the boxplots, the different plot type is
+determined by the `geom_col` function that creates a barplot. In addition, since the barplot shows only one value per
+level of TabsSpaces (in contrast to the boxplot that shows the distribution), we need to aggregate the values
+beforehand. We use the median as a robust measure. What we see in this plot is basically a different visualization of
+the three medians we already saw in the boxplots.
+
+Things get more interesting if we split the results up by country to see whether the effect is seen across countries in
+the same way, or whether this effect occurs only in some countries. To this end, we calculate the aggregates (medians)
+by country and split the plot into subplots (facets) along the variable `Country` using the function `facet_wrap`. The
+`scales` parameter says that the plots need not have the same scale on the y axis.
+```{r}
+g <- so %>% 
+  group_by(Country, TabsSpaces) %>% 
+  summarize(Salary = median(Salary, na.rm = TRUE)) %>% 
+  ungroup() %>%
+  ggplot(aes(x = TabsSpaces, y = Salary, fill = TabsSpaces)) + 
+  geom_col(na.rm = TRUE) +
+  facet_wrap(~Country, scales = 'free')
+print(g)
+```
+
+The difference between the Tabs and Spaces groups is robust across countries, though the difference seems to be slightly
+less pronounced in Germany and most pronounced in India. The main lesson here though is that geography (i.e. regional
+preferences for tabs or spaces) is not the reason for the salary differences. Let's see whether programming experience
+could be behind it.
+
+To see the differences across different levels of programming experience, we will use a line chart. The usage looks very
+similar to the multiple barplots, except that we now use `YearsCodedJob` instead of `TabsSpaces` as the x axis variable
+and use `TabsSpaces` as the grouping variable. The grouping is not done in subplots as in the case of the barplots, but
+within one plot, using the `group` aesthetic.
+```{r}
+g <- so %>% 
+  filter(!is.na(YearsCodedJob)) %>%
+  group_by(TabsSpaces, YearsCodedJob) %>% 
+  summarize(Salary = median(Salary, na.rm = TRUE)) %>% 
+  ungroup() %>%
+  ggplot(aes(x = YearsCodedJob, y = Salary, group = TabsSpaces, col = TabsSpaces)) + 
+  geom_line()
+print(g)
+```
+
+We can thus note that the salary gap between space and tab users is more or less consistent across experience levels. 
+
+Maybe different developer types with different salaries and perhaps different tab/space preferences can explain the gap
+then? We can explore this using a point chart, which also introduces two more `ggplot` functions: `geom_abline` to draw
+a line in the plot, and `geom_text` to annotate points. Finally, we will introduce the scaling functions for the x and y
+axes, which in this graphic are continuous, thus we use `scale_x_continuous` and `scale_y_continuous`:
+
+```{r}
+library(ggrepel)  # provides the function geom_text_repel for prettier label placement
+g <- so %>% 
+  filter(TabsSpaces %in% c('Tabs', 'Spaces')) %>%
+  mutate(DeveloperType = sapply(strsplit(DeveloperType, ';'), function(x) x[[1]])) %>%
+  filter(!is.na(DeveloperType)) %>%
+  group_by(DeveloperType, TabsSpaces) %>%
+  filter(n() >= 50) %>%   # eliminate groups with few responses
+  summarize(Salary = median(Salary, na.rm = TRUE)) %>%
+  spread(TabsSpaces, Salary) %>%
+  ggplot(aes(x = Tabs, y = Spaces)) +
+  geom_point() +
+  geom_abline(slope = 1, intercept = 0, col = 'red') + 
+  geom_text_repel(aes(label = DeveloperType)) +
+  scale_y_continuous(labels = scales::comma) +
+  scale_x_continuous(labels = scales::comma)
+print(g)
+```
+
+The red line gives us a reference for parity between tab and space users, and all points being above the line means that
+among all developer types, the salaries of space users are consistently higher than those of tab users[^3].
+
+[^3]: Our results in this plot differ slightly from the analysis as published on the Stack Overflow blog -- this is due 
+to our simplified handling of the multi-input field `DeveloperType`, using only the first input of that field as our
+classification and thus eliminating the overlap between the users of each type (which would lead to the analysis
+pipeline less straightforward to read).
+
+We have thus seen that developers that use spaces earn consistently more than developers using tabs, which leads us to 
+our closing remark for this part of the primer: when performing statistical analyses, never confuse correlation with 
+causation. Developers are very likely not paid more simply *because* they are using spaces instead of tabs, nor are they
+likely to prefer spaces over tabs *because* they earn more. Rather, it seems more likely that there is a third factor 
+correlated to both a preference for spaces over tabs *and* a higher salary that might explain the difference, but the 
+jury is still out which factor that might be. 

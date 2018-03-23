@@ -1,0 +1,314 @@
+---
+title: 'R Primer II: Data Wrangling'
+output:
+  html_document: default
+  html_notebook: default
+---
+
+```{r setup, cache = FALSE, echo = FALSE}
+# Don't stop compiling the notebook when an error occurs
+knitr::opts_chunk$set(error = TRUE)
+```
+
+
+# dplyr and the tidyverse
+
+On of the most efficient ways to manipulate data in R is with the package `dplyr`, which is included in `tidyverse`. 
+`dplyr` functions are not restricted to `tibble`s, they also work on `data.frame`s as well as other data structures.
+```{r}
+library(tidyverse)
+chol <- read_csv('cholesterol.csv')
+```
+
+One can apply `dplyr` functions one by one...
+```{r}
+chol_filtered <- filter(chol, Time == 1)
+chol_filtered
+chol_selection <- select(chol_filtered, ID, Cholesterol)
+chol_selection
+chol_ordered <- arrange(chol_selection, Cholesterol)
+chol_ordered
+```
+
+...or all at once with a rather convoluted nested function call, which is shorter but also more difficult to read: 
+
+```{r}
+arrange(select(filter(chol, Time == 1), ID, Cholesterol), Cholesterol)
+```
+
+One of the main advantages of `dplyr` comes into play with the `%>%` ("pipe") operator. Here, the functions used are
+listed more intuitively in the order in which they are called, and all parameters immediately follow the function name. 
+The output of the previous step is always used as the first parameter (unless specified otherwise, see below).
+```{r}
+chol %>%
+  filter(Time == 1) %>%
+  select(ID, Cholesterol) %>%
+  arrange(Cholesterol)
+```
+
+Another reason to use `dplyr` is performance. Operations on `tibble`s are already faster than their equivalent on
+`data.frame`s...
+
+```{r}
+big_df <- data.frame(x = rnorm(1e8), y = rnorm(1e8))
+big_tibble <- tibble(x = rnorm(1e8), y = rnorm(1e8))
+system.time(temp <- big_df[big_df$x < 0, ])
+system.time(temp <- big_tibble[big_tibble$x < 0, ])
+```
+
+...but using the `dplyr` function is still more efficient (on both `tibble`s and `data.frame`s):
+```{r}
+system.time(temp <- big_df %>% filter(x < 0))
+system.time(temp <- big_tibble %>% filter(x < 0))
+```
+
+Since we won't use these rather large datasets anymore, we can free up the memory they use by deleting them.
+```{r}
+rm(big_df, big_tibble, temp)
+```
+
+As a side note: while garbage collection can usually be relied upon to be done automatically, it is sometimes useful to
+know that the function `gc` can be used to manually trigger the garbage collector, especially when handling large data.
+```{r}
+gc() # Explicit garbage collection
+```
+
+## Overview of dplyr functions
+
+`dplyr` has functions for filtering rows...
+```{r}
+chol %>% filter(Cholesterol < 5)
+```
+
+...and selecting columns in a variety of ways.
+```{r}
+chol %>% select(Cholesterol)
+chol %>% select(1:3)
+chol %>% select(-Cholesterol)
+chol %>% select(Margarine:Cholesterol)
+chol %>% select(starts_with('M'))
+chol %>% select(contains('gar'), ends_with('ol'))
+```
+
+`select` and `rename` can both define new variables, but the difference lies in which columns are returned
+```{r}
+chol %>% select(Ch = Cholesterol)
+chol %>% rename(Ch = Cholesterol)
+```
+
+To add new colums to a dataset, use `mutate`:
+```{r}
+chol %>% mutate(Cholesterol_2 = Cholesterol - 5)
+```
+
+Sorting is done with `arrange`:
+```{r}
+chol %>% arrange(ID)
+```
+
+```{r}
+chol %>% arrange(-Cholesterol)
+```
+
+Note that `-Cholesterol` is just an elementwise multiplication of the column `Cholesterol` by `-1`. Within the arguments
+of dplyr functions, column names can be used like variables.
+```{r}
+chol %>% arrange(ID, -Cholesterol)
+```
+
+Aggregating over multiple rows is done with the function `summarize`:
+```{r}
+chol %>% summarize(mean_cholesterol = mean(Cholesterol))
+```
+
+Summaries such as this can also be computed using groups on the dataset:
+```{r}
+chol %>%
+  group_by(Time) %>%
+  summarize(mean_cholesterol = mean(Cholesterol))
+
+chol %>%
+  group_by(Time, Margarine) %>%
+  summarize(mean_cholesterol = mean(Cholesterol)) %>%
+  arrange(Margarine, Time)
+```
+
+We have now seen the basic functions that are used to manipulate data using `dplyr`, as well as the basic pipe operator 
+`%>%` to make the code more readable.
+
+## magrittr and pipes
+
+There are a couple more useful pipe operators in the package `magrittr`
+```{r}
+library(magrittr)
+```
+
+It is very common to write results back to the original data:
+
+```{r}
+head(chol)
+chol <- chol %>% arrange(desc(Cholesterol))
+head(chol)
+```
+
+The `%<>%` pipe can be used as a shorthand for this. 
+```{r}
+head(chol)
+chol %<>% arrange(ID, Time)  # shorthand for chol <- chol %>% arrange(ID, Time)
+head(chol)
+```
+
+Usually, the pipe operator passes the output from the left hand side (LHS) as the first argument to the function on the
+right hand side (RHS). If it is to be used in a different position, that position can be specified with a `.`:
+```{r}
+chol %>% lm(Cholesterol ~ Margarine * Time, data = .)
+```
+
+The `%$%` pipe operator can be used to access the columns of the output of the LHS by their names, as if they were
+variables, in the expression on the RHS.
+```{r}
+chol %$% lm(Cholesterol ~ Margarine * Time)
+```
+
+Finally, the tee-pipe `%T>%` pipes its results into the next two functions, the output of the next function being 
+ignored by the second function:
+```{r}
+chol %>%
+  filter(ID == 1) %T>%
+  (function(x) cat(paste('Using', nrow(x), 'Rows\n')))  %>%  # The output of this function is ignored
+  summarize(x = mean(Cholesterol))  # This uses the output of two steps before
+```
+
+## Interlude: anonymous functions
+
+Let's have a more detailed look at that function definition. Usually, when defining a function, that function gets named
+by assigning the function to a variable:
+```{r}
+print_nrow <- function(x) {
+  cat(paste('Using', nrow(x), 'Rows\n'))
+}
+
+chol %>% print_nrow()
+```
+
+We can, however, also use anonymous functions by defining them as we go:
+```{r}
+chol %>% (function(x) cat(paste('Using', nrow(x), 'Rows\n')))
+```
+
+Note that for use with the `%>%` operator (and for that use only), the function definition must be in parenthesis. 
+
+Other typical examples of using anonymous functions in R is in apply calls (for faster loops)
+
+In this example, we define a function that counts the number of unique values and apply it to each column of `chol`. 
+`lapply` applies a function to each element of a list (or column of a `data.frame`/`tibble` or similar structure) and 
+returns a list (`lapply` - "l" for "list").
+```{r}
+lapply(chol, function(x) {
+  res <- length(unique(x))
+  return(res)
+})
+```
+
+`sapply` is similar to `lapply`, but tries to simplify the structure of the return value to a matrix or a vector, 
+depending on the dimension of the output of the function (`sapply` - "s" for "simplify").
+```{r}
+sapply(chol, function(x) {
+  res <- length(unique(x))
+  return(res)
+})
+```
+
+# Data wrangling in practice
+
+Let's use `dplyr` to a practical case of preparing a dataset. First, two of the columns are recoded into factors. The 
+mutation can directly be applied to the dataset, thus we can use the `%<>%` pipe.
+```{r}
+chol %<>% mutate(Time = as.factor(Time),
+                 Margarine = as.factor(Margarine))
+```
+
+Assume we want to train a model where cholesterol values from multiple time points need to be considered simultaneously.
+One way of doing this would be to create three sub-datasets containing the Cholesterol values of one time point each and
+then joining these datasets:
+```{r}
+chol1 <- chol %>% filter(Time == 1) %>% select(-Time) %>% rename(T1 = Cholesterol)
+chol2 <- chol %>% filter(Time == 2) %>% select(-Time) %>% rename(T2 = Cholesterol)
+chol3 <- chol %>% filter(Time == 3) %>% select(-Time) %>% rename(T3 = Cholesterol)
+chol_joined <- chol1 %>% 
+                 left_join(chol2, by = c('ID', 'Margarine')) %>% 
+                 left_join(chol3, by = c('ID', 'Margarine'))
+chol_joined
+```
+
+This is, however, a rather common task, so there is a more efficient way of doing it. The function `spread` from `tidyr`
+(another `tidyverse` package) performs this exact restructuring of a dataset. In this case, we want to retain the
+original data as well as the modified dataset, so we assign the result to a new variable:
+```{r}
+chol_spread <- chol %>% spread(Time, Cholesterol)
+colnames(chol_spread)[3:5] <- paste0('T', 1:3)
+chol_spread
+```
+
+The inverse of the `spread` operation is called `gather`:
+```{r}
+chol_spread %>% gather('Time', 'Cholesterol', T1:T3)
+```
+
+Another rather typical task is creating a shifted version of a vector:
+```{r}
+lag(1:4)
+lag(1:4, 1)
+lag(1:4, 2)
+```
+
+Such a lag function could for example be used to compute the changes in cholesterol over time:
+```{r}
+chol %<>% group_by(ID) %>% 
+  arrange(Time) %>% 
+  mutate(Cholesterol_Diff = Cholesterol - lag(Cholesterol)) %>%
+  ungroup() %>%
+  arrange(ID, Time)
+
+chol
+```
+
+
+# Nonstandard evaluation in tidyverse functions
+
+The way that tidyverse functions accept object names as parameters -- without them being defined in the environment
+where they are called, to be instead adaptively interpreted by the function during its evaluation -- is called
+"Nonstandard evaluation" (NSE). While it makes for nicer usage in the interactive shell (among other advantages), it can
+cause problems when programming with these functions:
+
+```{r}
+variables <- c('Margarine', 'Time')
+lapply(variables, function(variable) {
+  cholesterol_aggregated <- (chol %>% 
+                              group_by(variable) %>%
+                              summarize(median_cholesterol = median(Cholesterol)))[['median_cholesterol']]
+})
+```
+
+This does not work because `group_by` expects its argument (`variable`) to be a column name. What we would like to do is
+hand it a variable containing the column name instead. For these cases, each of these functions has a "sibling" with an
+underscore at the end for bypassing NSE and instead using standard evaluation (SE).
+```{r}
+variable <- 'Time'
+
+chol %>% select(variable)
+chol %>% select('Time')
+chol %>% select_('Time')
+chol %>% select_(variable)
+```
+
+Using this SE-variant of the function, we can now fix the loop we tried to implement above:
+
+```{r}
+variables <- c('Margarine', 'Time')
+lapply(variables, function(variable) {
+  cholesterol_aggregated <- (chol %>% 
+                              group_by_(variable) %>%
+                              summarize(median_cholesterol = median(Cholesterol)))[['median_cholesterol']]
+})
+```
